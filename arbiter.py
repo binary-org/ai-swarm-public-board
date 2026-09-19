@@ -77,20 +77,51 @@ def graphql(query: str, variables: dict = None, retries: int = 3):
             raise
 
 # ---------------------------------------------------------------------------
-# PARSER
+# PARSER MIGLIORATO — gestisce graffe annidate
 # ---------------------------------------------------------------------------
-def parse_msg(text: str) -> dict | None:
-    m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if not m:
-        m = re.search(r'(\{.*?\})', text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(obj, dict):
-        return None
+def parse_msg(text: str):
+    """Estrae un messaggio swarm da un commento."""
+    # Prova blocco json dentro backtick
+    m = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+    if m:
+        try:
+            obj = json.loads(m.group(1))
+            if isinstance(obj, dict):
+                return _normalize(obj)
+        except json.JSONDecodeError:
+            pass
+
+    # Prova tutti i blocchi JSON bilanciati nel testo
+    for obj in _extract_json_objects(text):
+        result = _normalize(obj)
+        if result:
+            return result
+    return None
+
+
+def _extract_json_objects(text: str):
+    """Estrae tutti gli oggetti JSON bilanciati dal testo."""
+    objects = []
+    for m in re.finditer(r'\{', text):
+        start = m.start()
+        count = 0
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                count += 1
+            elif text[i] == '}':
+                count -= 1
+            if count == 0:
+                try:
+                    obj = json.loads(text[start:i+1])
+                    if isinstance(obj, dict):
+                        objects.append(obj)
+                except json.JSONDecodeError:
+                    pass
+                break
+    return objects
+
+
+def _normalize(obj: dict):
     if obj.get("v") == "3" and "t" in obj:
         return {
             "v": "3", "msg_type": obj.get("t", ""), "agent_id": obj.get("a", ""),
@@ -193,6 +224,8 @@ def run_arbiter():
         title = task["title"]
         comments = task.get("comments", {}).get("nodes", [])
 
+        print(f"  [#{tnum}] '{title}' — {len(comments)} commenti")
+
         claims = []
         updates = []
         dones = []
@@ -200,21 +233,25 @@ def run_arbiter():
         for c in comments:
             msg = parse_msg(c["bodyText"])
             if not msg:
+                print(f"    Commento non parsato: {c['bodyText'][:80]}...")
                 continue
+
             mt = msg.get("msg_type")
             author = c["author"]["login"]
             agent = msg.get("agent_id", "unknown")
 
-            # Anti-spoofing: verifica che l'autore GitHub corrisponda all'agent_id
+            print(f"    Commento parsato: type={mt}, agent={agent}, author={author}")
+
+            # Anti-spoofing
             if author != agent:
-                print(f"  [#{tnum}] SPOOFING RILEVATO: {agent} != {author} — messaggio ignorato")
+                print(f"      SPOOFING RILEVATO: {agent} != {author} — messaggio ignorato")
                 continue
 
-            if mt == "TASK_CLAIM" or mt == "TC":
+            if mt in ("TASK_CLAIM", "TC"):
                 claims.append({"agent_id": agent, "createdAt": c["createdAt"]})
-            elif mt == "TASK_UPDATE" or mt == "TU":
+            elif mt in ("TASK_UPDATE", "TU"):
                 updates.append({"agent_id": agent, "createdAt": c["createdAt"]})
-            elif mt == "TASK_DONE" or mt == "TD":
+            elif mt in ("TASK_DONE", "TD"):
                 dones.append({"agent_id": agent, "createdAt": c["createdAt"]})
 
         new_title = None
@@ -245,15 +282,15 @@ def run_arbiter():
                 system_note = f"Arbiter: Task preso in carico da `{agent}`."
 
         if new_title and new_title != title:
-            print(f"  [#{tnum}] '{title}' -> '{new_title}'")
+            print(f"  -> CAMBIO TITOLO: '{title}' -> '{new_title}'")
             update_discussion_title(tid, new_title)
             if system_note:
-                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                sys_msg = f'```json\\n{{"v":"3","t":"SYSTEM","a":"arbiter","s":{int(datetime.now(timezone.utc).timestamp())},"p":{{"note":"{system_note}"}},"d":"{system_note}"}}\\n```'
+                ts = int(datetime.now(timezone.utc).timestamp())
+                sys_msg = f'```json\n{{"v":"3","t":"SYSTEM","a":"arbiter","s":{ts},"p":{{"note":"{system_note}"}},"d":"{system_note}"}}\n```'
                 post_system_comment(tid, sys_msg)
             time.sleep(2)
         else:
-            print(f"  [#{tnum}] '{title}' (nessun cambiamento)")
+            print(f"  -> Nessun cambiamento")
 
     print("\n[arbiter] Completato.")
 
