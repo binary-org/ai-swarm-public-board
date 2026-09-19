@@ -4,8 +4,11 @@ arbiter.py
 Risolve conflitti sui task e aggiorna i titoli delle discussioni.
 Valida l'identita degli agenti controllando author.login.
 
+Per bypassare il controllo anti-spoofing in modalita test:
+    set ARBITER_BYPASS_SPOOFING=true   (Windows)
+    export ARBITER_BYPASS_SPOOFING=true (Linux/Mac)
+
 Uso:
-    export GITHUB_TOKEN=ghp_xxx
     python arbiter.py
 """
 
@@ -28,6 +31,9 @@ ENDPOINT = "https://api.github.com/graphql"
 REPO_ID = "R_kgDOUhtD_g"
 CAT_TASK_BOARD = "DIC_kwDOUhtD_s4DF-BP"
 CAT_SWARM_CONTROL = "DIC_kwDOUhtD_s4DF-BI"
+
+# Modalita test: bypassa il controllo anti-spoofing
+BYPASS_SPOOFING = os.getenv("ARBITER_BYPASS_SPOOFING", "").lower() in ("true", "1", "yes")
 
 # ---------------------------------------------------------------------------
 # RATE LIMITER
@@ -77,11 +83,10 @@ def graphql(query: str, variables: dict = None, retries: int = 3):
             raise
 
 # ---------------------------------------------------------------------------
-# PARSER MIGLIORATO — gestisce graffe annidate
+# PARSER MIGLIORATO
 # ---------------------------------------------------------------------------
 def parse_msg(text: str):
     """Estrae un messaggio swarm da un commento."""
-    # Prova blocco json dentro backtick
     m = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
     if m:
         try:
@@ -91,7 +96,6 @@ def parse_msg(text: str):
         except json.JSONDecodeError:
             pass
 
-    # Prova tutti i blocchi JSON bilanciati nel testo
     for obj in _extract_json_objects(text):
         result = _normalize(obj)
         if result:
@@ -216,7 +220,11 @@ def _base_title(title: str) -> str:
 def run_arbiter():
     print("[arbiter] Recupero discussioni task-board...")
     tasks = fetch_task_discussions()
-    print(f"[arbiter] Trovate {len(tasks)} discussioni task.\n")
+    print(f"[arbiter] Trovate {len(tasks)} discussioni task.")
+    if BYPASS_SPOOFING:
+        print("[arbiter] ATTENZIONE: modalita BYPASS_SPOOFING attiva (solo per test)\n")
+    else:
+        print("[arbiter] Anti-spoofing attivo.\n")
 
     for task in tasks:
         tid = task["id"]
@@ -242,10 +250,12 @@ def run_arbiter():
 
             print(f"    Commento parsato: type={mt}, agent={agent}, author={author}")
 
-            # Anti-spoofing
-            if author != agent:
+            # Anti-spoofing (bypassabile in modalita test)
+            if not BYPASS_SPOOFING and author != agent:
                 print(f"      SPOOFING RILEVATO: {agent} != {author} — messaggio ignorato")
                 continue
+            elif BYPASS_SPOOFING and author != agent:
+                print(f"      BYPASS: {agent} != {author} — accettato per test")
 
             if mt in ("TASK_CLAIM", "TC"):
                 claims.append({"agent_id": agent, "createdAt": c["createdAt"]})
