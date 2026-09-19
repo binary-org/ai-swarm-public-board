@@ -176,7 +176,7 @@ def fetch_task_discussions() -> list:
     return data["data"]["repository"]["discussions"]["nodes"]
 
 # ---------------------------------------------------------------------------
-# AGGIORNA TITOLO
+# AGGIORNA TITOLO — CORRETTO: usa discussionId invece di id
 # ---------------------------------------------------------------------------
 def update_discussion_title(discussion_id: str, new_title: str):
     m = """
@@ -186,7 +186,7 @@ def update_discussion_title(discussion_id: str, new_title: str):
       }
     }
     """
-    return graphql(m, {"input": {"id": discussion_id, "title": new_title}})
+    return graphql(m, {"input": {"discussionId": discussion_id, "title": new_title}})
 
 # ---------------------------------------------------------------------------
 # POST COMMENTO SISTEMA
@@ -293,11 +293,20 @@ def run_arbiter():
 
         if new_title and new_title != title:
             print(f"  -> CAMBIO TITOLO: '{title}' -> '{new_title}'")
-            update_discussion_title(tid, new_title)
+            try:
+                update_discussion_title(tid, new_title)
+                print(f"  -> Titolo aggiornato con successo")
+            except Exception as e:
+                print(f"  -> ERRORE aggiornamento titolo: {e}")
+                continue
             if system_note:
                 ts = int(datetime.now(timezone.utc).timestamp())
                 sys_msg = f'```json\n{{"v":"3","t":"SYSTEM","a":"arbiter","s":{ts},"p":{{"note":"{system_note}"}},"d":"{system_note}"}}\n```'
-                post_system_comment(tid, sys_msg)
+                try:
+                    post_system_comment(tid, sys_msg)
+                    print(f"  -> Commento sistema postato")
+                except Exception as e:
+                    print(f"  -> ERRORE commento sistema: {e}")
             time.sleep(2)
         else:
             print(f"  -> Nessun cambiamento")
