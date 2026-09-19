@@ -147,7 +147,7 @@ def error(agent_id: str, message: str, code: int = 0):
 def parse_msg(text: str) -> dict | None:
     m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
     if not m:
-    m = re.search(r'(\{.*?\})', text, re.DOTALL)
+        m = re.search(r'(\{.*?\})', text, re.DOTALL)
     if not m:
         return None
     try:
